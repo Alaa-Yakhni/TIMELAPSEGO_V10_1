@@ -305,10 +305,9 @@ configure_SD_card() {
 #######################################################################################
 ##                                  FUNCTION                                         ##
 #######################################################################################
-configure_usb()
-{
-     if [ -d "/mnt/usb/conf" ]; then
-        # Search for JSON files (including .json and .json.skip) on SD card
+configure_usb() {
+    if [ -d "/mnt/usb/conf" ]; then
+        # Search for JSON files (including .json and .json.skip) on the USB drive
         for file in /mnt/usb/conf/config.json /mnt/usb/conf/config.json.skip; do
             if [ -f "$file" ]; then
                 echo "JSON file found: $file" >> "$tem_log"
@@ -316,11 +315,11 @@ configure_usb()
                 if [ -f "/home/pi/data/config.json" ]; then
                     sudo rm -f /home/pi/data/config.json
                 fi
-                # Copy JSON file from SD card and rename it
+                # Copy JSON file from USB and rename it
                 sudo cp "$file" /home/pi/data/config.json
-                #Extract "uniquekey" and "boxname" and write them to the new JSON file .done
-		        jq '{uniquekey: .uniquekey, boxname: .boxname}' "$file" > "$file".done
-		        rm "$file"
+                # Extract "uniquekey" and "boxname" and write them to the new JSON file .done
+                jq '{uniquekey: .uniquekey, boxname: .boxname}' "$file" > "$file".done
+                rm "$file"
 
                 # Execute other functions
                 extract_UDID
@@ -333,7 +332,7 @@ configure_usb()
                 update_service_sms
             fi
         done
-     fi
+    fi
 }
 
 #######################################################################################
