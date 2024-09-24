@@ -4,6 +4,15 @@
 mode_file="/home/pi/data/mode.txt"
 last_config_file="/home/pi/data/last_config.txt"
 
+# Time elapsed since the Pi was powered up, in seconds
+uptime_seconds=$(cat /proc/uptime | awk '{print int($1)}')
+# Convert 5 minutes into seconds
+five_minutes=300
+# Check whether the ignition time is less than 5 minutes
+if [ "$uptime_seconds" -lt "$five_minutes" ]; then
+    echo "The  Pi has been switched on for less than 5 minutes. Exit script."
+    exit 0
+fi
 # Read the mode from the mode.txt file
 mode=$(awk 'NR==1{print $1}' "$mode_file")
 

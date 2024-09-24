@@ -306,8 +306,8 @@ configure_SD_card() {
 ##                                  FUNCTION                                         ##
 #######################################################################################
 configure_usb() {
-    if [ -d "/mnt/usb/conf" ]; then
-        # Search for JSON files (including .json and .json.skip) on the USB drive
+     if [ -d "/mnt/usb/conf" ]; then
+        # Search for JSON files (including .json and .json.skip) on SD card
         for file in /mnt/usb/conf/config.json /mnt/usb/conf/config.json.skip; do
             if [ -f "$file" ]; then
                 echo "JSON file found: $file" >> "$tem_log"
@@ -315,11 +315,11 @@ configure_usb() {
                 if [ -f "/home/pi/data/config.json" ]; then
                     sudo rm -f /home/pi/data/config.json
                 fi
-                # Copy JSON file from USB and rename it
+                # Copy JSON file from SD card and rename it
                 sudo cp "$file" /home/pi/data/config.json
-                # Extract "uniquekey" and "boxname" and write them to the new JSON file .done
-                jq '{uniquekey: .uniquekey, boxname: .boxname}' "$file" > "$file".done
-                rm "$file"
+                #Extract "uniquekey" and "boxname" and write them to the new JSON file .done
+		        jq '{uniquekey: .uniquekey, boxname: .boxname}' "$file" > "$file".done
+		        rm "$file"
 
                 # Execute other functions
                 extract_UDID
@@ -332,7 +332,7 @@ configure_usb() {
                 update_service_sms
             fi
         done
-    fi
+     fi
 }
 
 #######################################################################################
@@ -405,58 +405,112 @@ update_file_config() {
 
 sync_time() {
 
-    # Execute the command and store the output in a variable
-    date_rtc=$(sudo tlgo-rtc -g)
-    # Convert the dates to  timestamps
-    timestamp_rtc=$(date -d "$date_rtc" +%s)
+    # Loop for 3 attempts to retrieve and validate the RTC date
+    for i in {1..3}; do
+        # Executes the command and retrieves the RTC date
+        date_rtc=$(sudo tlgo-rtc -g)
+        # Displays the date retrieved on each attempt
+        echo "Tentative $i : $date_rtc" >> "/home/pi/config.txt"
+    
+        # Checks whether the date is valid in the expected format
+        if [[ "$date_rtc" =~ ^.*[A-Za-z]{3}[[:space:]][0-9]{1,2}[[:space:]][0-9]{2}:[0-9]{2}:[0-9]{2}[[:space:]][A-Za-z]{4}[[:space:]][0-9]{4}$ ]]; then
 
-    # Lire le fichier JSON et stocker les valeurs dans des variables
-    last_date_pi=$(stat -c %Y /home/pi/data/date.txt)
+            echo "The RTC date is valid : $date_rtc" >> "/home/pi/config.txt"
+        
+            # Get the last modification date of the file as a timestamp
+            last_date_pi=$(stat -c %Y /home/pi/data/date.txt)
 
+            # Convert RTC date to timestamp
+            timestamp_rtc=$(date -d "$date_rtc" +%s)
+            if [ $? -eq 0 ] && [ "$timestamp_rtc" -gt "$last_date_pi" ]; then
+                # Initialize the retry counter for setting the system date
+                attempt=0
+                max_attempts=3
 
-    # Compare the timestamps
-    if [ $timestamp_rtc -gt $last_date_pi ]; then
-     #   echo "The RTC date is later than the system date."
-        sudo tlgo-rtc -s
-        echo "The new system date is the RTC date $date_rtc" >> "/home/pi/config.txt"
-    else
-        # camera_time_seconds=$(gphoto2 --get-config datetime | grep -oP 'Current: \K\d+')
-        # if [ $camera_time_seconds -gt $timestamp_last_date ];then 
-            # Convert the new system timestamp to date format
-        #    date_new_sys=$(date -d "@$camera_time_seconds" +"%Y-%m-%d %H:%M:%S")
-            # Set the system time 
-        #     sudo date -s "$date_new_sys"
-        #else 
-            # Exécuter le script Python
-          output=$(python3 /home/pi/scripts/cron.py)
-          tache_min=$(echo "$output" | awk 'NR==2')
-          time_to_sleep=$(($tache_min - 20))
-            # Calculate the new system timestamp by adding the sleep time
-          timestamp_new_sys=$((last_date_pi + time_to_sleep))
-            # Convert the new system timestamp to date format
-            date_new_sys=$(date -d "@$timestamp_new_sys" +"%Y-%m-%d %H:%M:%S")
-            echo "The new system date is the last date plus the sleep duration: $date_new_sys" >> "/home/pi/config.txt"
-            # Set the system time to the calculated new date
-            sudo date -s "$date_new_sys"
-        # fi
-      fi
+                # Loop for retrying the system date update
+                while [ $attempt -lt $max_attempts ]; do
+                    # Executes the command to set the system date
+                    sudo tlgo-rtc -s
+                
+                    # Check if the command was successful
+                    if [ $? -eq 0 ]; then
+                        # If the command was successful
+                        echo "The new system date is set to the RTC date: $date_rtc" >> "/home/pi/config.txt"
+                        break
+                    else
+                        echo "Date update failed. Retry in 0.2 seconds..." >> "/home/pi/config.txt"
+                        sleep 0.2
+                        attempt=$((attempt + 1))
+                    fi
+                done
+                break
+            else
+                echo "The RTC date is not more recent than the last system date." >> "/home/pi/config.txt"
+            fi
+        else
+            echo "Invalid RTC date format. Retrying in 0.2 seconds..." >> "/home/pi/config.txt"
+        fi
+        sudo rm /tmp/type_rtc.txt
+        sleep 0.2  # Wait before the next attempt
+    done
+
+    mode=$(awk 'NR==1{print $1}' /home/pi/data/mode.txt)
+    # If 3 attempts fail to obtain a valid date
+    if [ $i -eq 3 ] && [ "$mode" = "sleepy" ]; then
+        echo "Error: 3 attempts to obtain a valid date have failed" >> "/home/pi/config.txt"
+        last_date_pi=$(stat -c %Y /home/pi/data/date.txt)
+        output=$(python3 /home/pi/scripts/cron.py)
+        index=$(echo "$output" | awk 'NR==1')
+        frequency=$(jq -r ".jobs[$index].frequency" "$JSON_FILE" | cut -d' ' -f1 | grep -o '[0-9]\+')
+        frequency_seconds=$((frequency * 60))
+        time_to_sleep=$(($frequency_seconds))
+        # Calculate the new system timestamp by adding the sleep time
+        timestamp_new_sys=$((last_date_pi + time_to_sleep))
+        # Convert the new system timestamp to date format
+        date_new_sys=$(date -d "@$timestamp_new_sys" +"%Y-%m-%d %H:%M:%S")
+        echo "The new system date is the last date plus the sleep duration: $date_new_sys" >> "/home/pi/config.txt"
+        # Set the system time to the calculated new date
+        sudo date -s "$date_new_sys"
+    fi
     # Number of retries
     retries=30
+    # URL test connexion 
+    url="http://www.google.com/favicon.ico"
+
     echo "+--------------------------------------------------------------------------+" >> "/home/pi/config.txt"
     # Attempt to sync time with NTP server multiple times
     for ((attempt=1; attempt<=$retries; attempt++)); do
         # Check if Internet access is available by trying to connect to an NTP server
-        if ping -q -c 1 -W 1 pool.ntp.org >/dev/null; then
+        if wget --spider --timeout=3 $url &> /dev/null; then
             # Retrieve time from an NTP server and update system clock
             sudo ntpdate -u pool.ntp.org >> "/home/pi/config.txt" 2>&1
             echo "+--------------------------------------------------------------------------+" >> "/home/pi/config.txt"
-            # Update hardware clock (RTC) with system time
-            sudo tlgo-rtc -r
             echo "The new system date is synchronized with NTP" >> "/home/pi/config.txt" 2>&1
-            # Update camera date 
-            #gphoto2 --set-config datetime=`date +%s`
-           # date_now=$(date +%s)
-          ##  echo "$date_now" > /home/pi/data/date.txt
+            # Update hardware clock (RTC) with system time
+            # Initialize attempt counter
+            tries=0
+            max_tries=3
+            success=0
+            # Loop to attempt to update RTC with system time
+            while [[ $tries -lt $max_tries ]]; do
+                if sudo tlgo-rtc -r; then
+                    success=1
+                    break
+                else
+                    echo "Attempt $((tries+1)) failed, retrying..." >> "/home/pi/config.txt" 2>&1
+                    tries=$((tries+1))
+                    sleep 0.2  # Wait before retrying
+                fi
+            done
+
+            # Check success or failure
+            if [[ $success -eq 1 ]]; then
+                echo "RTC successfully updated with system time." >> "/home/pi/config.txt" 2>&1
+            else
+                echo "Failed to update RTC after $max_tries attempts." >> "/home/pi/config.txt" 2>&1
+            fi
+            date_now=$(date +%s)
+            echo "$date_now" > /home/pi/data/date.txt
             # Exit loop if synchronization was successful
             break
         else
@@ -619,7 +673,7 @@ date +%s > /home/pi/data/last_config.txt
 
 now="$(date +"%Y_%m_%d_%H_%M_%S")"
 # log temporel
- tem_log=/home/pi/"${now}_config.txt"
+ tem_log=/tmp/"${now}_config.txt"
 
  file_log="$LOG_DIR/${now}_config.txt"
 mv "/home/pi/config.txt"  "$tem_log"

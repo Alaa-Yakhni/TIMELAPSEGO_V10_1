@@ -423,24 +423,26 @@ move_files_if_exists() {
 
 usb_send_picture()
 {
+    mkdir -p /mnt/usb/DATABASE
     model=$(cat /proc/device-tree/model)
     if [[ "$model" == *"Raspberry Pi"* ]]; then
         move_files_if_exists /DATA/HIGH /mnt/usb/HIGH /DATA/img_send_usb_HIGH
         move_files_if_exists /DATA/RAW /mnt/usb/RAW /DATA/img_send_usb_RAW
-        mv /DATA/DATABASE /mnt/usb/DATABASE
+        mv /DATA/DATABASE/* /mnt/usb/DATABASE/
     elif [[ "$model" == *"NanoPi"* ]]; then
-       
+
         #from NanoPi
         move_files_if_exists /DATA/HIGH /mnt/usb/HIGH /DATA/img_send_usb_HIGH
         move_files_if_exists /DATA/RAW /mnt/usb/RAW /DATA/img_send_usb_RAW
-        mv /DATA/DATABASE /mnt/usb/DATABASE
+        mv /DATA/DATABASE/* /mnt/usb/DATABASE/
 
         #from sdcard
         move_files_if_exists /mnt/sdcard/HIGH /mnt/usb/HIGH /mnt/sdcard/img_send_usb_HIGH
         move_files_if_exists /mnt/sdcard/RAW /mnt/usb/RAW /mnt/sdcard/img_send_usb_RAW
-        mv /mnt/sdcard/DATABASE /mnt/usb/DATABASE
+        mv /mnt/sdcard/DATABASE/* /mnt/usb/DATABASE/
     fi
-   
+    rm /mnt/usb/HIGH/*jpg_exiftool_tmp
+    rm /mnt/usb/RAW/*jpg_exiftool_tmp
 }
 #######################################################################################
 ##                                  FUNCTION                                         ##
@@ -487,7 +489,7 @@ S3_ENDPOINT_BLUR="s3://$S3_BUCKET_BLUR/$UDID/HIGH"
 url="https://prod.timelapsego.com/rest/box/$UDID/pictures"
 
 # get value is_no_transfer from JSON_FILE
-notransfer=$(jq -r '.is_no_transfer' "$JSON_FILE")
+no_transfer=$(jq -r '.is_no_transfer' "$JSON_FILE")
 is_blur=$(jq -r '.is_blur' "$JSON_FILE")
 power_supply=$(jq -r '.type' "$JSON_FILE")
 no_transfer_voltage=$(jq -r '.no_transfer_voltage' "$JSON_FILE")
@@ -575,19 +577,17 @@ fi
 #                              CASE S3                                        #
 #-----------------------------------------------------------------------------#
 
-if [[ $img_storage == *"S3"* ]] && (( $(echo "$voltage > $no_transfer_voltage" | bc -l) )); then
- 
-    if [ "$is_blur" == "false" ]; then 
-        # Envoyer les photos depuis Pi
-        send_picture /DATA/HIGH /DATA/LOW /DATA/LOG /DATA/DATABASE /DATA/RAW
-        # Envoyer les photos depuis la carte SD 
-        send_picture /mnt/sdcard/HIGH /mnt/sdcard/LOW /mnt/sdcard/LOG /mnt/sdcard/DATABASE /mnt/sdcard/RAW
-    elif [ "$is_blur" == "true" ]; then        
-        ## Depuis Pi 
-        send_blur /DATA/BLUR /DATA/LOG /DATA/DATABASE
-        ### Depuis la carte SD
-        send_blur /mnt/sdcard/BLUR /mnt/sdcard/LOG /mnt/sdcard/DATABASE
-    fi  
+if [[ $img_storage == *"S3"* ]] && [[ "$no_transfer" == "false" ]] && (( $(echo "$voltage > $no_transfer_voltage" | bc -l) )); then
+  
+    # Envoyer les photos depuis Pi
+    send_picture /DATA/HIGH /DATA/LOW /DATA/LOG /DATA/DATABASE /DATA/RAW
+    # Envoyer les photos depuis la carte SD 
+    send_picture /mnt/sdcard/HIGH /mnt/sdcard/LOW /mnt/sdcard/LOG /mnt/sdcard/DATABASE /mnt/sdcard/RAW
+            
+    ## Depuis Pi 
+    send_blur /DATA/BLUR /DATA/LOG /DATA/DATABASE
+    ### Depuis la carte SD
+    send_blur /mnt/sdcard/BLUR /mnt/sdcard/LOG /mnt/sdcard/DATABASE  
 fi
 
 #-----------------------------------------------------------------------------#
@@ -599,19 +599,21 @@ if [[ $img_storage == *"USB"* ]]; then
         usb_send_picture
         # Vérifier si le répertoire existe et contient des fichiers .json
         if [[ $data_storage == *"Server"* ]] && [[ -d "/mnt/usb/DATABASE" ]]; then
-            # Boucle pour parcourir tous les fichiers .json dans le répertoire
-            for file in "/mnt/usb/DATABASE"/*.json; do
-                # Vérifier si des fichiers .json existent
-                if [ -e "$file" ]; then
-                    # Extraire le nom du fichier sans le chemin
-                    file_name=$(basename "$file" .json)
-                    send_database ${file_name}.jpg $file_name /mnt/usb/DATABASE
-                else
-                    # Si aucun fichier .json n'est trouvé
-                    echo "Aucun fichier .json trouvé dans $source_dir"
-                    break
-                fi
-            done
+            if ping -q -c 1 -W 1 pool.ntp.org >/dev/null; then 
+                # Boucle pour parcourir tous les fichiers .json dans le répertoire
+                for file in "/mnt/usb/DATABASE"/*.json; do
+                    # Vérifier si des fichiers .json existent
+                    if [ -e "$file" ]; then
+                        # Extraire le nom du fichier sans le chemin
+                        file_name=$(basename "$file" .json)
+                        send_database ${file_name}.jpg $file_name /mnt/usb/DATABASE
+                    else
+                        # Si aucun fichier .json n'est trouvé
+                        echo "Aucun fichier .json trouvé dans $source_dir"
+                        break
+                    fi
+                done
+            fi
         fi
         sudo sync
     else

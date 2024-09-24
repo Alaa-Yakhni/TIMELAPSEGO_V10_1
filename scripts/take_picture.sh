@@ -229,6 +229,49 @@ Check-pictureLow() {
     fi
 }
 
+
+
+#############################################################################
+##                              Function                                   ##
+#############################################################################
+# Function to delete old files based on timestamp 
+delete_old_exiftool_tmp() {
+    local directory="$1"
+
+    # Iterate over all files ending with jpg_exiftool_tmp
+    for file in "$directory"/*jpg_exiftool_tmp; do
+        # Check if the file exists (in case there are no matching files)
+        [ -e "$file" ] || continue
+
+        # Extract the date part from the filename
+        date_part="${file##*/}"          # Get the filename only
+        date_part="${date_part%%.*}"     # Get everything before the first dot
+
+        # Replace underscores with spaces and reformat to a valid date format
+        formatted_timestamp=$(echo "$date_part" | sed 's/_/ /g' | sed 's/^\([0-9]*\) \([0-9]*\) \([0-9]*\) \([0-9]*\) \([0-9]*\) \([0-9]*\)/\1-\2-\3 \4:\5:\6/')
+
+        # Convert the extracted timestamp to Unix time (seconds since the epoch)
+        epoch_seconds=$(date -d "$formatted_timestamp" +%s 2>/dev/null)
+
+        # Check if the conversion was successful
+        if [ $? -eq 0 ]; then
+            # Get the current time in seconds
+            current_time=$(date +%s)
+
+            # Calculate the difference in seconds
+            difference=$((current_time - epoch_seconds))
+
+            # Check if the difference is greater than one minute (60 seconds)
+            if [ "$difference" -gt 60 ]; then
+                # Remove the file
+                echo "Deleting file: $file (Difference: $difference seconds)"
+                rm "$file"
+            fi
+        else
+            echo "Error converting timestamp for file: $file"
+        fi
+    done
+}
 #############################################################################
 #                          MAIN
 ############################################################################
@@ -303,7 +346,7 @@ fi
 now="$(date +"%Y_%m_%d_%H_%M_%S")"
 
 # log temporel
-tem_log="${now}_take_photo.txt"
+tem_log="/tmp/${now}_take_photo.txt"
 
 file_log="$LOG_DIR/${now}_take_photo.txt"
 # Define the photo name with the current date
@@ -347,7 +390,10 @@ if [[ $img_storage == *"S3"* ]]; then
   Check-pictureLow $PICTURES_DIR $PICTURES_LOW
 fi
 
-## move photos in time directory kept for 30 days in the case of transfer to usb
+
+delete_old_exiftool_tmp "/DATA/HIGH"
+
+## copy photos in time directory kept for 30 days in the case of transfer to usb
 if [[ $img_storage == *"USB"* ]]; then
     mkdir -p /DATA/img_send_usb_HIGH
     mkdir -p /DATA/img_send_usb_RAW
@@ -396,12 +442,6 @@ if [ -b /dev/mmcblk1p1 ]; then
 
     sudo fsck /dev/mmcblk1p1
     if [ $? -eq 0 ]; then
-        # Check available space on sd card octet
-        available_space=$(df --block-size=1 --output=avail "$SD_MOUNT_POINT" | awk 'NR==2')
-        # Calculate the total size of each directory in bytes
-        total_size=$(du -sb "$PICTURES_DIR" "$LOG_DIR" "$DATABASE_DIR" "$PICTURES_LOW" "$PICTURES_BLUR" "$PICTURES_RAW" | awk '{s+=$1} END {print s}')
-
-        if [ "$available_space" -ge "$total_size" ]; then
 
             if [ "$is_blur" == "true" ]; then
                 if [ -d "/mnt/sdcard/BLUR" ]; then
@@ -535,17 +575,15 @@ if [ -b /dev/mmcblk1p1 ]; then
                 fi
                 sudo sync
             fi
+
+            delete_old_exiftool_tmp "/mnt/usb/HIGH"
             ## move photos in time directory kept for 30 days in the case of transfer to usb sd card
             if [[ $img_storage == *"USB"* ]]; then
                 mkdir -p /mnt/sdcard/img_send_usb_HIGH
                 mkdir -p /mnt/sdcard/img_send_usb_RAW   
-                cp /DATA/img_send_usb_HIGH/* /mnt/sdcard/img_send_usb_HIGH    
-                cp /DATA/img_send_usb_RAW/* /mnt/sdcard/img_send_usb_RAW 
+                mv /DATA/img_send_usb_HIGH/* /mnt/sdcard/img_send_usb_HIGH    
+                mv /DATA/img_send_usb_RAW/* /mnt/sdcard/img_send_usb_RAW 
             fi
-        else 
-            echo "Error: Not enough space available on SD card to move files" >> "$tem_log"
-        fi
-
     else
         echo "No SD card detected" >> "$tem_log"
         echo "+--------------------------------------------------------------------------+" >> "$tem_log"

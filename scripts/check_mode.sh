@@ -151,8 +151,6 @@ check_mode() {
                 if [ $difference -lt 10 ]; then
                     return 1
                 fi
-                date_now=$(date +%s)
-                echo "$date_now" > /home/pi/data/date.txt
                 if [[ "$model" == *"Raspberry"* ]]; then
                     sleep_PI 3 $time
                     poweroff
